@@ -1,0 +1,107 @@
+name: Build kmod-dummy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout builder repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            g++ \
+            gawk \
+            gettext \
+            git \
+            libncurses-dev \
+            libssl-dev \
+            python3 \
+            python3-distutils \
+            rsync \
+            unzip \
+            zlib1g-dev \
+            file \
+            wget \
+            curl \
+            swig \
+            time
+
+      - name: Clone ImmortalWrt
+        run: |
+          git clone \
+            --depth=1 \
+            https://github.com/immortalwrt/immortalwrt.git \
+            immortalwrt
+
+      - name: Update feeds
+        working-directory: immortalwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Configure IPQ95xx
+        working-directory: immortalwrt
+        run: |
+          cat > .config <<'EOF'
+          CONFIG_TARGET_qualcommbe=y
+          CONFIG_TARGET_qualcommbe_ipq95xx=y
+          CONFIG_PACKAGE_kmod-dummy=m
+          EOF
+
+          make defconfig
+
+      - name: Enable dummy kernel module
+        working-directory: immortalwrt
+        run: |
+          echo "CONFIG_DUMMY=m" >> .config
+          make defconfig
+
+          echo "===== TARGET ====="
+          grep '^CONFIG_TARGET_' .config | grep -E 'qualcommbe|ipq95xx' || true
+
+          echo "===== DUMMY ====="
+          grep 'CONFIG_DUMMY' .config || true
+
+          echo "===== KMOD ====="
+          grep 'CONFIG_PACKAGE_kmod-dummy' .config || true
+
+      - name: Download sources
+        working-directory: immortalwrt
+        run: |
+          make download -j$(nproc)
+
+      - name: Build kernel packages
+        working-directory: immortalwrt
+        run: |
+          make package/kernel/linux/compile V=s -j$(nproc)
+
+      - name: Locate kmod-dummy
+        run: |
+          echo "===== APK ====="
+          find immortalwrt/bin -type f \
+            -name '*kmod-dummy*.apk' \
+            -print || true
+
+          echo "===== IPK ====="
+          find immortalwrt/bin -type f \
+            -name '*kmod-dummy*.ipk' \
+            -print || true
+
+      - name: Upload kmod-dummy
+        uses: actions/upload-artifact@v4
+        with:
+          name: kmod-dummy
+          path: |
+            immortalwrt/bin/packages/**/base/*kmod-dummy*.apk
+            immortalwrt/bin/packages/**/base/*kmod-dummy*.ipk
+          if-no-files-found: error
